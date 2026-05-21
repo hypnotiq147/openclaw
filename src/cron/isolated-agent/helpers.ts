@@ -60,9 +60,17 @@ export function detectCronDenialToken(text: string | undefined): string | undefi
       return token;
     }
   }
-  const lowerText = normalized.toLowerCase();
+  // Natural-language tokens only fire on the first non-empty line to avoid
+  // false positives when the phrase appears in subordinate clauses deeper in
+  // agent output (e.g. "some tasks could not run" in a summary body).
+  const firstLine =
+    normalized
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? "";
+  const lowerLine = firstLine.toLowerCase();
   for (const token of CRON_DENIAL_CASE_INSENSITIVE_TOKENS) {
-    if (lowerText.includes(token)) {
+    if (lowerLine.includes(token)) {
       return token;
     }
   }
