@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectCronDenialToken,
   isHeartbeatOnlyResponse,
   pickDeliverablePayloads,
   pickLastDeliverablePayload,
@@ -105,6 +106,104 @@ describe("pickDeliverablePayloads", () => {
     ];
 
     expect(pickDeliverablePayloads(payloads)).toEqual([{ text: "last error", isError: true }]);
+  });
+});
+
+describe("detectCronDenialToken", () => {
+  describe("exact tokens match anywhere in text", () => {
+    it("detects SYSTEM_RUN_DENIED on first line", () => {
+      expect(detectCronDenialToken("SYSTEM_RUN_DENIED: agent profile not found")).toBe(
+        "SYSTEM_RUN_DENIED",
+      );
+    });
+
+    it("detects SYSTEM_RUN_DENIED in body (not first line)", () => {
+      expect(detectCronDenialToken("Run result\nSYSTEM_RUN_DENIED\nSee logs")).toBe(
+        "SYSTEM_RUN_DENIED",
+      );
+    });
+
+    it("detects INVALID_REQUEST anywhere", () => {
+      expect(detectCronDenialToken("INVALID_REQUEST: bad payload")).toBe("INVALID_REQUEST");
+    });
+  });
+
+  describe("natural-language tokens fire only on first non-empty line (true positives)", () => {
+    it("detects 'could not run' when it is the first line", () => {
+      expect(detectCronDenialToken("could not run\nsome details")).toBe("could not run");
+    });
+
+    it("detects 'was denied' when first non-empty line starts with the phrase", () => {
+      expect(detectCronDenialToken("Request was denied by policy\nSee logs")).toBe("was denied");
+    });
+
+    it("detects 'runtime denied' on a leading status line even with blank prefix", () => {
+      expect(detectCronDenialToken("\nruntime denied: exec not available\nDetails")).toBe(
+        "runtime denied",
+      );
+    });
+  });
+
+  describe("natural-language tokens do NOT fire when phrase is in body, not first line (false-positive regression)", () => {
+    it("ignores 'could not run' in second line of a successful summary", () => {
+      expect(
+        detectCronDenialToken(
+          "Completed 3 of 5 tasks.\nNote: low-priority jobs could not run due to resource limits.",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("ignores 'did not run' appearing after a heading line", () => {
+      expect(
+        detectCronDenialToken(
+          "Run complete — 5 signals collected.\n\nSome validations did not run (optional).",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("ignores 'was denied' when it describes a downstream API result", () => {
+      expect(
+        detectCronDenialToken(
+          "All webhooks posted.\nThe rate limiter was denied access to one external endpoint.",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("ignores 'runtime denied' when it appears after a successful status line", () => {
+      expect(
+        detectCronDenialToken("Config loaded ok.\nruntime denied: optional step skipped."),
+      ).toBeUndefined();
+    });
+
+    it("ignores 'approval cannot safely bind' in an explanatory clause on line 2", () => {
+      expect(
+        detectCronDenialToken(
+          "5 items processed.\napproval cannot safely bind to external services — expected in sandbox mode.",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("ignores 'did not run' embedded in a clause describing skipped items", () => {
+      expect(
+        detectCronDenialToken(
+          "Backup complete.\nFiles that did not run the new format are skipped automatically.",
+        ),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("edge cases", () => {
+    it("returns undefined for undefined input", () => {
+      expect(detectCronDenialToken(undefined)).toBeUndefined();
+    });
+
+    it("returns undefined for empty string", () => {
+      expect(detectCronDenialToken("")).toBeUndefined();
+    });
+
+    it("returns undefined for whitespace-only input", () => {
+      expect(detectCronDenialToken("   \n   ")).toBeUndefined();
+    });
   });
 });
 
